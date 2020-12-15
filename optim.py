@@ -1,7 +1,10 @@
 import numpy as np
+import time
+
 from utils import calcJacBlocks, Rot, mod2pi, alternateCalcCost, plot_states
 from utils import tfMat, rotation_from_tfMat, tfVec
 from scipy.linalg import block_diag
+import matplotlib.pyplot as plt
 
 "This is too slow :cry:"
 def sgd(states, meas, inf_m, n_iter=100, alpha=1e-10):
@@ -71,16 +74,20 @@ def sgd(states, meas, inf_m, n_iter=100, alpha=1e-10):
     
     return states
 
-def SGDOptimizeGraph(p, meas, cov, inf_m, n_iter=100):
+def SGDOptimizeGraph(p, meas, cov, inf_m, n_iter=200):
     """
     Input:
     p   [nx3]  : n states representing a global pose x, y, theta
     meas[mx5]  : m measurements representing a relative measurement i, j, dx, dy, dth
     cov [mx3x3]: m covariance matrices each representing a measurement covariance 
     """
-    print(np.sum(alternateCalcCost(p.T, meas, inf_m)))
 
+    # cost = []
+    start_time = time.time()
     for iter in range(1, n_iter):
+        if(iter == 101):
+            print(time.time() - start_time)
+
         gamma = np.full((3,1), 1e12)    # Asssuming 1e12 is more or less infinity
 
         # Update M approximation
@@ -114,21 +121,27 @@ def SGDOptimizeGraph(p, meas, cov, inf_m, n_iter=100):
 
             d = 2* np.matmul(np.linalg.inv(np.matmul(np.matmul(R.T, sigma_ab), R)), r)
 
-            # Update the poses
-            for j in [0,1,2]:
-                alpha = 1/(gamma[j,0]*iter)
-                total_weight = np.sum(1/M[a+1:b+1, j])
-                beta = (b-a)*d[j,0]*alpha
-                if abs(beta) > abs(r[j,0]):
-                    beta = r[j,0]
-                dpose = 0
+            alpha = 1/(iter*gamma)
+            total_weight = np.sum(1/M[a+1:b+1], axis=0)
+            beta = (b-a)*d*alpha
+            
+            # Some clipping heuristic?
+            mask = np.abs(beta) > np.abs(r)
+            beta[mask] = r[mask]
+            
+            # Get the pose corrections for the current measurements
+            d_pose_individual = (beta.flatten()/M[a+1:b+1])/total_weight
+            d_pose_cumulative = np.cumsum(d_pose_individual, axis=0)
+            
+            # Update poses
+            p[a+1:b+1] += d_pose_cumulative
+            p[b+1:] += d_pose_cumulative[-1]
 
-                for i in range(a+1, p.shape[0]):
-                    if(a+1 <= i <= b):
-                        dpose = dpose + beta/M[i,j]/total_weight
-                    p[i,j] += dpose
-        
-        print("Iteration ended. wow.")
-        print("iter no: ", iter, " ", np.sum(alternateCalcCost(p.T, meas, inf_m)))
-        if(iter%10 == 0):
-            plot_states(p[:,0], p[:,1], p[:,2])
+        # if(iter%20 == 0):
+        #     print("20 Iterations ended. wow.")
+        # plot_states(p[:,0], p[:,1], p[:,2], iter)
+        # print(np.sum(alternateCalcCost(p.T, meas, inf_m)))
+        # cost.append(np.sum(alternateCalcCost(p.T, meas, inf_m)))
+    # plt.plot(cost)
+    # plt.show()
+    
